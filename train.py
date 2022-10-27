@@ -3,6 +3,7 @@ from functools import partial
 import math
 import multiprocessing as mp
 import os
+from pathlib import Path
 import pickle
 from typing import Any, Dict, Tuple
 
@@ -14,10 +15,13 @@ from torch import nn
 from torchvision import transforms
 
 
-# More TODO items to improve the code:
+#
+#  More TODO items to improve the code:
 #   * better logger for fitness/evaluation functions (maybe tensorboard/wandb)
+#   * checkpoint/resume logic could be definitely improved
 #   * agent implementation doesn't require torch, btw
-#   * procedure to evaluate + render already trained agent
+#
+
 
 #
 # modules / build blocks for the solution
@@ -33,28 +37,28 @@ class LSTMController(nn.Module):
     ):
         super().__init__()
         self._hidden_size = num_hidden
-        self._lstm = nn.LSTM(
+        self.lstm = nn.LSTM(
             input_size=input_dim,
             hidden_size=self._hidden_size,
             num_layers=1,
         )
-        self._fc = nn.Linear(
+        self.fc = nn.Linear(
             in_features=self._hidden_size,
             out_features=output_dim,
         )
         if output_activation == 'tanh':
-            self._activation = nn.Tanh()
+            self.activation = nn.Tanh()
         elif output_activation == 'softmax':
-            self._activation = nn.Softmax(dim=-1)
+            self.activation = nn.Softmax(dim=-1)
         else:
             raise ValueError("unsupported activation function")
         self.reset()
         self.eval()
 
     def forward(self, x):
-        x, self.hidden = self._lstm(x.view(1, 1, -1), self._hidden)
-        x = self._fc(x)
-        x = self._activation(x)
+        x, self.hidden = self.lstm(x.view(1, 1, -1), self._hidden)
+        x = self.fc(x)
+        x = self.activation(x)
         return x
 
     def reset(self):
@@ -70,6 +74,7 @@ class SelfAttention(nn.Module):
         super().__init__()
         self.fc_q = nn.Linear(data_dim, dim_q)
         self.fc_k = nn.Linear(data_dim, dim_q)
+        self.eval()
 
     def forward(self, X):
         _, _, K = X.size()
@@ -122,11 +127,11 @@ class CarRacingAgent(nn.Module):
                 patch_center_col = offset + j * patch_stride
                 patch_centers.append([patch_center_row, patch_center_col])
         self._patch_centers = torch.tensor(patch_centers).float()
-        self._attention = SelfAttention(
+        self.attention = SelfAttention(
             data_dim=data_dim * self._patch_size ** 2,
             dim_q=query_dim,
         )
-        self._controller = LSTMController(
+        self.controller = LSTMController(
             input_dim=self._top_k * 2,
             output_dim=output_dim,
             num_hidden=num_hidden,
@@ -141,17 +146,15 @@ class CarRacingAgent(nn.Module):
         patches = patches.unfold(2, self._patch_size, self._patch_stride).permute(0, 2, 1, 4, 3)
         patches = patches.reshape((-1, self._patch_size, self._patch_size, C))
         flattened_patches = patches.reshape((1, -1, C * self._patch_size ** 2))
-        attention_matrix = self._attention(flattened_patches)
+        attention_matrix = self.attention(flattened_patches)
         patch_importance_matrix = torch.softmax(attention_matrix.squeeze(), dim=-1)
         patch_importance = patch_importance_matrix.sum(dim=0)
         ix = torch.argsort(patch_importance, descending=True)
         top_k_ix = ix[:self._top_k]
-        centers = self._patch_centers[top_k_ix]
-        centers = centers.flatten(0, -1)
+        centers = self._patch_centers[top_k_ix].flatten(0, -1)
         if self._normalize_positions:
             centers = centers / self._image_size
-        y = self._controller(centers)
-        return y.squeeze()
+        return self.controller(centers).squeeze()
 
     def step(self, obs):
         with torch.no_grad():
@@ -160,7 +163,7 @@ class CarRacingAgent(nn.Module):
         return actions, None
 
     def reset(self):
-        self._controller.reset()
+        self.controller.reset()
 
 
 class CarRacingWrapper(gym.Wrapper):
@@ -170,8 +173,8 @@ class CarRacingWrapper(gym.Wrapper):
         self.env = env
         self.steps_cap = steps_cap
         self.neg_reward_cap = neg_reward_cap
-        self.action_diff = (env.action_space.high - env.action_space.low) / 2.
-        self.action_integrate = (env.action_space.high + env.action_space.low) / 2.
+        self.action_range = (env.action_space.high - env.action_space.low) / 2.
+        self.action_mean = (env.action_space.high + env.action_space.low) / 2.
         self.neg_reward_seq = 0
         self.steps_count = 0
 
@@ -181,21 +184,18 @@ class CarRacingWrapper(gym.Wrapper):
         self.steps_count = 0
         return obs
 
-    def preprocess_action(self, action):
-        return action * self.action_diff + self.action_integrate
-
     def overwrite_terminate_flag(self, reward):
         if self.neg_reward_cap == 0:
             # no need to terminate early
             return False
-        self.neg_reward_seq = 0 if reward > 0 else self.neg_reward_seq + 1
+        self.neg_reward_seq = 0 if reward >= 0 else self.neg_reward_seq + 1
         out_of_tracks = 0 < self.neg_reward_cap < self.neg_reward_seq
         overtime = 0 < self.steps_cap <= self.steps_count
         return out_of_tracks or overtime
 
     def step(self, action):
         self.steps_count += 1
-        action = self.preprocess_action(action)
+        action = action * self.action_range + self.action_mean
         obs, reward, done, timeout, info = self.env.step(action)
         done = done or self.overwrite_terminate_flag(reward)
         return obs, reward, done, timeout, info
@@ -205,9 +205,9 @@ class CarRacingWrapper(gym.Wrapper):
 # ES training loop (strategy, init params, loop, eval, checkpoints)
 #
 def rollout(env, agent) -> Tuple[float, Dict[str, Any]]:
+    total_reward, done, steps = 0, False, 0
     obs, _ = env.reset()
     agent.reset()
-    total_reward, done, steps = 0, False, 0
     while not done:
         action, _ = agent.step(obs)
         obs, reward, done, _, _ = env.step(action)
@@ -216,8 +216,9 @@ def rollout(env, agent) -> Tuple[float, Dict[str, Any]]:
     return total_reward, {"steps": steps}
 
 
-def make_env(evaluate: bool = False):
-    env = gym.make("CarRacing-v2", verbose=False)
+def make_env(evaluate: bool = False, render: bool = False):
+    render_mode = "human" if render else None
+    env = gym.make("CarRacing-v2", verbose=False, render_mode=render_mode)
     kwargs = dict(neg_reward_cap=20, steps_cap=1000) if not evaluate else {}
     env = CarRacingWrapper(env, **kwargs)
     return env
@@ -237,14 +238,15 @@ def make_agent():
         normalize_positions=True,
     )
 
+
 #
 # CMA-ES helpers (generic)
 #
-def from_torch(module):
+def from_torch(module: nn.Module):
     return np.concatenate([p.data.numpy().flatten() for p in module.parameters()])
 
 
-def to_torch(params, module):
+def to_torch(params, module: nn.Module):
     ps, ts = list(module.parameters()), torch.Tensor(params)
     for p, p0 in zip(ps, ts.split([e.numel() for e in ps])):
         p.data.copy_(p0.view(p.size()))
@@ -264,32 +266,32 @@ def load_checkpoint(path):
         return data["es"], data["best"]
 
 
-def init_params():
-    return from_torch(make_agent())
-
-
 def get_fitness(n_samples: int, params: np.ndarray, verbose: bool = False) -> float:
     env = make_env()
     agent = to_torch(params, make_agent())
     rewards = np.array([rollout(env, agent)[0] for _ in range(n_samples)])
-    avg = rewards.mean()
+    avg_reward = rewards.mean()
     if verbose:
-        print(f"Fitness min/mean/max: {rewards.min():.2f}/{avg:.2f}/{rewards.max():.2f}")
-    return -avg
+        print(f"Fitness min/mean/max: {rewards.min():.2f}/{avg_reward:.2f}/{rewards.max():.2f}")
+    return -avg_reward
 
 
-def evaluate(params) -> float:
-    env = make_env(evaluate=True) # no need for early termination when evaluating
+def evaluate(params, render: bool = False) -> float:
+    env = make_env(evaluate=True, render=render) # no need for early termination when evaluating
     agent = to_torch(params, make_agent())
-    return -rollout(env, agent)
+    reward, _ = rollout(env, agent)
+    return -reward
 
 
 def train(args):
     if args.resume:
         es, best_ever = load_checkpoint(args.resume)
     else:
+        init_agent = make_agent()
+        print(init_agent)
+        init_params = from_torch(init_agent)
         es = cma.CMAEvolutionStrategy(
-            init_params(),
+            init_params,
             args.init_sigma,
             {"popsize": args.population_size, "seed": args.seed, "maxiter": args.max_iter}
         )
@@ -327,9 +329,15 @@ def parse_args():
     parser.add_argument("--eval-every", type=int, default=10)
     parser.add_argument("--num-eval-rollouts", type=int, default=64)
     parser.add_argument("--logs-dir", type=str, default="es_logs/version_0")
+    parser.add_argument("--from-pretrained", type=Path, default=None)
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    train(args)
+    if args.from_pretrained:
+        with np.load(args.from_pretrained) as data:
+            params = data['params'].flatten()
+            evaluate(params, render=True)
+    else:
+        train(args)

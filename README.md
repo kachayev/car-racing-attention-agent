@@ -55,3 +55,11 @@ optional arguments:
   --num-eval-rollouts NUM_EVAL_ROLLOUTS
   --logs-dir LOGS_DIR
 ```
+
+## Evaluation
+
+To make sure both the agent and the environemnt are compatible with the original paper, the repo also contains set of original weights re-packed to the suitable format (see `pretrained/` folder with the archive). To run the agent use `--from-pretrained` flag:
+
+```shell
+% python train.py --from-pretrained pretrained/original.npz
+```
