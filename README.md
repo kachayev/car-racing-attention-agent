@@ -29,6 +29,17 @@ There's a single script to run:
 
 ```shell
 % python train.py
+CarRacingAgent(
+  (attention): SelfAttention(
+    (fc_q): Linear(in_features=147, out_features=4, bias=True)
+    (fc_k): Linear(in_features=147, out_features=4, bias=True)
+  )
+  (controller): LSTMController(
+    (lstm): LSTM(20, 16)
+    (fc): Linear(in_features=16, out_features=3, bias=True)
+    (activation): Tanh()
+  )
+)
 (128_w,256)-aCMA-ES (mu_w=66.9,w_1=3%) in dimension 3667 (seed=1143, Wed Jan 26 16:38:16 2022)
 ...
 ```
