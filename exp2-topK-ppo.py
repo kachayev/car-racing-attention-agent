@@ -7,9 +7,9 @@ from pathlib import Path
 import pickle
 from typing import Any, Dict, Tuple
 
-import cma
 import gym
 import numpy as np
+from sb3_contrib import RecurrentPPO
 import torch
 from torch import nn
 from torchvision import transforms
@@ -335,41 +335,20 @@ def evaluate(base_agent_params, params, render: bool = False) -> float:
 def train(args):
     with np.load(args.base_from_pretrained) as data:
         base_agent_params = data['params'].flatten()
-    if args.resume:
-        es, best_ever = load_checkpoint(args.resume)
-    else:
-        init_agent = make_agent()
-        print(init_agent)
-        init_params = from_torch(init_agent)
-        es = cma.CMAEvolutionStrategy(
-            init_params,
-            args.init_sigma,
-            {"popsize": args.population_size, "seed": args.seed, "maxiter": args.max_iter}
-        )
-        best_ever = cma.optimization_tools.BestSolution()
-    if not args.num_workers:
-        args.num_workers = mp.cpu_count() - 1
-    current_step = 0
-    with mp.Pool(processes=args.num_workers) as pool:
-        while not es.stop():
-            current_step += 1
-            solutions = es.ask()
-            es.tell(
-                solutions,
-                pool.map(partial(get_fitness, base_agent_params, args.num_rollouts, verbose=True), solutions)
-            )
-            es.disp()
-            best_ever.update(es.best)
-            save_checkpoint(args.logs_dir, es, best_ever)
-            if 0 == current_step % args.eval_every:
-                fitness = pool.map(
-                    lambda _: evaluate(base_agent_params, es.result.xfavorite), range(args.num_eval_rollouts))
-                print(f"Evaluation: step={current_step} fitness={np.mean(fitness)}")
-        es.result_pretty()
+    env = make_env(base_agent_params)
+    trainer = RecurrentPPO(
+        'MlpLstmPolicy',
+        env,
+        verbose=1,
+        learning_rate=0.003,
+        policy_kwargs=dict(lstm_hidden_size=16, net_arch=[dict(pi=[], vf=[])])
+    )
+    print(trainer.policy)
+    trainer.learn(total_timesteps=1_000_000, log_interval=100)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser("RL agent training with ES")
+    parser = argparse.ArgumentParser("RL agent training with PPO")
     parser.add_argument("--seed", type=int, default=1143)
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
@@ -379,7 +358,7 @@ def parse_args():
     parser.add_argument("--num-rollouts", type=int, default=16)
     parser.add_argument("--eval-every", type=int, default=10)
     parser.add_argument("--num-eval-rollouts", type=int, default=64)
-    parser.add_argument("--logs-dir", type=str, default="es_logs/exp1_topK_cmaes_v0")
+    parser.add_argument("--logs-dir", type=str, default="es_logs/exp1_topK_ppo_v0")
     parser.add_argument("--from-pretrained", type=Path, default=None)
     parser.add_argument("--base-from-pretrained", type=Path)
     return parser.parse_args()
