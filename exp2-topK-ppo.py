@@ -8,7 +8,7 @@ import gym
 from gym.spaces import Box
 import numpy as np
 from sb3_contrib import RecurrentPPO
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.utils import set_random_seed
 import torch
@@ -299,13 +299,15 @@ def train(args):
     )
     print(model.policy)
     checkpoint_callback = CheckpointCallback(
-        save_freq=100,
+        save_freq=10_000,
         save_path="sb3_logs/",
         name_prefix="exp2-topK-ppo",
         save_replay_buffer=False,
         save_vecnormalize=False,
-    )    
-    model.learn(total_timesteps=args.total_timesteps, log_interval=100, callback=checkpoint_callback)
+    )
+    eval_env = make_base_env(base_agent_params, evaluate=True)
+    eval_callback = EvalCallback(eval_env, eval_freq=1_000, render=False)
+    model.learn(total_timesteps=args.total_timesteps, log_interval=100, callback=[checkpoint_callback, eval_callback])
 
 
 def parse_args():
