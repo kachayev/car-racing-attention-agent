@@ -307,7 +307,7 @@ def train(args):
     )
     eval_env = make_base_env(base_agent_params, evaluate=True)
     eval_callback = EvalCallback(eval_env, eval_freq=1_000, render=False)
-    model.learn(total_timesteps=args.total_timesteps, log_interval=100, callback=[checkpoint_callback, eval_callback])
+    model.learn(total_timesteps=args.total_timesteps, log_interval=10, callback=[checkpoint_callback, eval_callback])
 
 
 def parse_args():
