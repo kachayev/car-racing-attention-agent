@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import gym
+from gym.spaces import Box
 import numpy as np
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.callbacks import CheckpointCallback
@@ -179,13 +180,17 @@ class CarRacingWrapper(gym.Wrapper):
         self.steps_count = 0
         self.base_agent = base_agent
 
+    @property
+    def observation_space(self):
+        return Box(low=0.0, high=1.0, shape=(20,), dtype=np.float32)
+
     def reset(self):
         self.base_agent.reset()
-        obs, flag = self.env.reset()
+        obs = self.env.reset()
         obs = self.overwrite_obs(obs)
         self.neg_reward_seq = 0
         self.steps_count = 0
-        return obs, flag
+        return obs
 
     def overwrite_obs(self, obs):
         centers, _ = self.base_agent.step(obs)
@@ -203,10 +208,10 @@ class CarRacingWrapper(gym.Wrapper):
     def step(self, action):
         self.steps_count += 1
         action = action * self.action_range + self.action_mean
-        obs, reward, done, timeout, info = self.env.step(action)
+        obs, reward, done, info = self.env.step(action)
         obs = self.overwrite_obs(obs)
         done = done or self.overwrite_terminate_flag(reward)
-        return obs, reward, done, timeout, info
+        return obs, reward, done, info
 
 
 #
@@ -225,8 +230,9 @@ def rollout(env, agent) -> Tuple[float, Dict[str, Any]]:
 
 
 def make_base_env(base_agent_params, evaluate: bool = False, render: bool = False):
-    render_mode = "human" if render else None
-    env = gym.make("CarRacing-v2", verbose=False, render_mode=render_mode)
+    # NOTE: becase we are using sb3-contib package we have to go with old version
+    # of the environment. API is adjusted as well.
+    env = gym.make("CarRacing-v0", verbose=False)
     kwargs = dict(neg_reward_cap=20, steps_cap=1000) if not evaluate else {}
     base_agent = make_base_agent(base_agent_params)
     env = CarRacingWrapper(env, base_agent, **kwargs)
@@ -235,9 +241,7 @@ def make_base_env(base_agent_params, evaluate: bool = False, render: bool = Fals
 
 def make_env(base_agent_params: np.ndarray, seed: int, rank: int):
     def _init() -> gym.Env:
-        env = make_base_agent(base_agent_params)
-        env.seed(seed+rank)
-        return env
+        return make_base_env(base_agent_params)
     set_random_seed(seed)
     return _init
 
@@ -285,7 +289,13 @@ def train(args):
         env,
         verbose=1,
         learning_rate=0.003,
-        policy_kwargs=dict(lstm_hidden_size=16, net_arch=[dict(pi=[], vf=[])])
+        policy_kwargs=dict(
+            lstm_hidden_size=16,
+            net_arch=[dict(pi=[], vf=[])],
+            activation_fn=nn.Tanh,
+            shared_lstm=True,
+            enable_critic_lstm=False,
+        )
     )
     print(model.policy)
     checkpoint_callback = CheckpointCallback(
