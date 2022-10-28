@@ -56,7 +56,7 @@ class LSTMController(nn.Module):
         self.eval()
 
     def forward(self, x):
-        x, self.hidden = self.lstm(x.view(1, 1, -1), self._hidden)
+        x, self._hidden = self.lstm(x.view(1, 1, -1), self._hidden)
         x = self.fc(x)
         x = self.activation(x)
         return x
