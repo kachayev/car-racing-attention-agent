@@ -332,6 +332,12 @@ def evaluate(base_agent_params, params, render: bool = False) -> float:
     return -reward
 
 
+# NOTE: multiprocessing module uses pickle that fails when dealing
+# with lambdas (globally visible function is required)
+def evaluate_cb(base_agent_params, params, _idx) -> float:
+    return evaluate(base_agent_params, params)
+
+
 def train(args):
     with np.load(args.base_from_pretrained) as data:
         base_agent_params = data['params'].flatten()
@@ -362,8 +368,7 @@ def train(args):
             best_ever.update(es.best)
             save_checkpoint(args.logs_dir, es, best_ever)
             if 0 == current_step % args.eval_every:
-                fitness = pool.map(
-                    lambda _: evaluate(base_agent_params, es.result.xfavorite), range(args.num_eval_rollouts))
+                fitness = pool.imap_unordered(partial(evaluate_cb, base_agent_params, es.result.xfavorite), range(args.num_eval_rollouts))
                 print(f"Evaluation: step={current_step} fitness={np.mean(fitness)}")
         es.result_pretty()
 
