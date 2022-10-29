@@ -276,11 +276,17 @@ def get_fitness(n_samples: int, params: np.ndarray, verbose: bool = False) -> fl
     return -avg_reward
 
 
-def evaluate(params, render: bool = False) -> float:
+def evaluate(params: np.ndarray, render: bool = False) -> float:
     env = make_env(evaluate=True, render=render) # no need for early termination when evaluating
     agent = to_torch(params, make_agent())
     reward, _ = rollout(env, agent)
     return -reward
+
+
+# NOTE: multiprocessing module uses pickle that fails when dealing
+# with lambdas (globally visible function is required)
+def evaluate_cb(params: np.ndarray, _idx: int) -> float:
+    return evaluate(params)
 
 
 def train(args):
@@ -311,8 +317,7 @@ def train(args):
             best_ever.update(es.best)
             save_checkpoint(args.logs_dir, es, best_ever)
             if 0 == current_step % args.eval_every:
-                fitness = pool.map(
-                    lambda _: evaluate(es.result.xfavorite), range(args.num_eval_rollouts))
+                fitness = pool.imap_unordered(partial(evaluate_cb, es.result.xfavorite), range(args.num_eval_rollouts))
                 print(f"Evaluation: step={current_step} fitness={np.mean(fitness)}")
         es.result_pretty()
 
