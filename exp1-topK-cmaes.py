@@ -368,7 +368,7 @@ def train(args):
             best_ever.update(es.best)
             save_checkpoint(args.logs_dir, es, best_ever)
             if 0 == current_step % args.eval_every:
-                fitness = pool.imap_unordered(partial(evaluate_cb, base_agent_params, es.result.xfavorite), range(args.num_eval_rollouts))
+                fitness = pool.map(partial(evaluate_cb, base_agent_params, es.result.xfavorite), range(args.num_eval_rollouts))
                 print(f"Evaluation: step={current_step} fitness={np.mean(fitness)}")
         es.result_pretty()
 
