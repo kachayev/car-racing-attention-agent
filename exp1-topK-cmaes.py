@@ -329,13 +329,16 @@ def evaluate(base_agent_params, params, render: bool = False) -> float:
     env = make_env(base_agent_params, evaluate=True, render=render) # no need for early termination when evaluating
     agent = to_torch(params, make_agent())
     reward, _ = rollout(env, agent)
-    return -reward
+    return reward
 
 
 # NOTE: multiprocessing module uses pickle that fails when dealing
 # with lambdas (globally visible function is required)
-def evaluate_cb(base_agent_params, params, _idx) -> float:
-    return evaluate(base_agent_params, params)
+def evaluate_cb(base_agent_params, params, _idx: int, verbose: bool = True) -> float:
+    reward = evaluate(base_agent_params, params)
+    if verbose:
+        print(f"Evaluation reward: {reward}")
+    return reward
 
 
 def train(args):
@@ -362,13 +365,16 @@ def train(args):
             solutions = es.ask()
             es.tell(
                 solutions,
-                pool.map(partial(get_fitness, base_agent_params, args.num_rollouts, verbose=True), solutions)
+                pool.map(partial(get_fitness, base_agent_params, args.num_rollouts, verbose=args.verbose), solutions)
             )
             es.disp()
             best_ever.update(es.best)
             save_checkpoint(args.logs_dir, es, best_ever)
             if 0 == current_step % args.eval_every:
-                fitness = pool.map(partial(evaluate_cb, base_agent_params, es.result.xfavorite), range(args.num_eval_rollouts))
+                fitness = pool.map(
+                    partial(evaluate_cb, base_agent_params, es.result.xfavorite, verbose=args.verbose),
+                    range(args.num_eval_rollouts)
+                )
                 print(f"Evaluation: step={current_step} fitness={np.mean(fitness)}")
         es.result_pretty()
 
@@ -387,6 +393,7 @@ def parse_args():
     parser.add_argument("--logs-dir", type=str, default="es_logs/exp1_topK_cmaes_v0")
     parser.add_argument("--from-pretrained", type=Path, default=None)
     parser.add_argument("--base-from-pretrained", type=Path)
+    parser.add_argument("--verbose", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
 
