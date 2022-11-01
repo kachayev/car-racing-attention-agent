@@ -16,14 +16,6 @@ from torchvision import transforms
 
 
 #
-#  More TODO items to improve the code:
-#   * better logger for fitness/evaluation functions (maybe tensorboard/wandb)
-#   * checkpoint/resume logic could be definitely improved
-#   * agent implementation doesn't require torch, btw
-#
-
-
-#
 # modules / build blocks for the solution
 #
 class LSTMController(nn.Module):
@@ -94,11 +86,38 @@ class CarRacingAgent(nn.Module):
     """
     def __init__(
         self,
-        image_size,
-        query_dim,
         output_dim,
         output_activation,
         num_hidden,
+        top_k,
+    ):
+        super().__init__()
+        self.controller = LSTMController(
+            input_dim=top_k * 2,
+            output_dim=output_dim,
+            num_hidden=num_hidden,
+            output_activation=output_activation,
+        )
+        self.eval()
+
+    def forward(self, x):
+        return self.controller(x).squeeze()
+
+    def step(self, centers):
+        with torch.no_grad():
+            action = self.forward(centers)
+        return action, None
+
+    def reset(self):
+        self.controller.reset()
+
+
+class Exp3Agent(nn.Module):
+
+    def __init__(
+        self,
+        image_size,
+        query_dim,
         patch_size,
         patch_stride,
         top_k,
@@ -131,12 +150,6 @@ class CarRacingAgent(nn.Module):
             data_dim=data_dim * self._patch_size ** 2,
             dim_q=query_dim,
         )
-        self.controller = LSTMController(
-            input_dim=self._top_k * 2,
-            output_dim=output_dim,
-            num_hidden=num_hidden,
-            output_activation=output_activation,
-        )
         self.eval()
 
     def forward(self, x):
@@ -163,36 +176,7 @@ class CarRacingAgent(nn.Module):
         return centers, None
 
     def reset(self):
-        self.controller.reset()
-
-
-class Exp1Agent(nn.Module):
-
-    def __init__(
-        self,
-        output_dim,
-        output_activation,
-        num_hidden,
-        top_k,
-    ):
-        super().__init__()
-        self.controller = LSTMController(
-            input_dim=top_k * 2,
-            output_dim=output_dim,
-            num_hidden=num_hidden,
-            output_activation=output_activation,
-        )
-
-    def forward(self, x):
-        return self.controller(x).squeeze()
-
-    def step(self, obs):
-        with torch.no_grad():
-            actions = self.forward(obs).numpy()
-        return actions, None
-
-    def reset(self):
-        self.controller.reset()
+        pass
 
 
 class CarRacingWrapper(gym.Wrapper):
@@ -210,15 +194,9 @@ class CarRacingWrapper(gym.Wrapper):
 
     def reset(self):
         self.base_agent.reset()
-        obs, flag = self.env.reset()
-        obs = self.overwrite_obs(obs)
         self.neg_reward_seq = 0
         self.steps_count = 0
-        return obs, flag
-
-    def overwrite_obs(self, obs):
-        centers, _ = self.base_agent.step(obs)
-        return centers
+        return self.env.reset()
 
     def overwrite_terminate_flag(self, reward):
         if self.neg_reward_cap == 0:
@@ -229,11 +207,15 @@ class CarRacingWrapper(gym.Wrapper):
         overtime = 0 < self.steps_cap <= self.steps_count
         return out_of_tracks or overtime
 
+    def overwrite_action(self, centers):
+        action, _ = self.base_agent.step(centers)
+        return action
+
     def step(self, action):
+        action = self.overwrite_action(action)
         self.steps_count += 1
         action = action * self.action_range + self.action_mean
         obs, reward, done, timeout, info = self.env.step(action)
-        obs = self.overwrite_obs(obs)
         done = done or self.overwrite_terminate_flag(reward)
         return obs, reward, done, timeout, info
 
@@ -264,27 +246,23 @@ def make_env(base_agent_params, evaluate: bool = False, render: bool = False):
 
 def make_base_agent(base_agent_params):
     agent = CarRacingAgent(
-        image_size=96,
-        query_dim=4,
         output_dim=3,
         output_activation="tanh",
         num_hidden=16,
+        top_k=10,
+    )
+    return to_torch(base_agent_params, agent)
+
+
+def make_agent():
+    return Exp3Agent(
+        image_size=96,
+        query_dim=4,
         patch_size=7,
         patch_stride=4,
         top_k=10,
         data_dim=3,
         normalize_positions=True,
-    )
-    to_torch(base_agent_params, agent)
-    return agent
-
-
-def make_agent():
-    return Exp1Agent(
-        output_dim=3,
-        output_activation="tanh",
-        num_hidden=16,
-        top_k=10,
     )
 
 
@@ -390,7 +368,7 @@ def parse_args():
     parser.add_argument("--num-rollouts", type=int, default=16)
     parser.add_argument("--eval-every", type=int, default=10)
     parser.add_argument("--num-eval-rollouts", type=int, default=64)
-    parser.add_argument("--logs-dir", type=str, default="es_logs/exp1_topK_cmaes_v0")
+    parser.add_argument("--logs-dir", type=str, default="es_logs/exp3_topK_qk_cmaes_v0")
     parser.add_argument("--from-pretrained", type=Path, default=None)
     parser.add_argument("--base-from-pretrained", type=Path)
     parser.add_argument("--verbose", action=argparse.BooleanOptionalAction, default=True)
@@ -400,9 +378,3 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     train(args)
-    # if args.from_pretrained:
-    #     with np.load(args.from_pretrained) as data:
-    #         params = data['params'].flatten()
-    #         evaluate(params, render=True)
-    # else:
-    #     train(args)
