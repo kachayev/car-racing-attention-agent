@@ -86,12 +86,19 @@ class CarRacingAgent(nn.Module):
     """
     def __init__(
         self,
+        query_dim,
         output_dim,
         output_activation,
         num_hidden,
+        patch_size,
+        data_dim,
         top_k,
     ):
         super().__init__()
+        self.attention = SelfAttention(
+            data_dim=data_dim * patch_size ** 2,
+            dim_q=query_dim,
+        )
         self.controller = LSTMController(
             input_dim=top_k * 2,
             output_dim=output_dim,
@@ -105,7 +112,7 @@ class CarRacingAgent(nn.Module):
 
     def step(self, centers):
         with torch.no_grad():
-            action = self.forward(centers)
+            action = self.forward(centers).numpy()
         return action, None
 
     def reset(self):
@@ -246,10 +253,13 @@ def make_env(base_agent_params, evaluate: bool = False, render: bool = False):
 
 def make_base_agent(base_agent_params):
     agent = CarRacingAgent(
+        query_dim=4,
         output_dim=3,
         output_activation="tanh",
         num_hidden=16,
+        patch_size=7,
         top_k=10,
+        data_dim=3,
     )
     return to_torch(base_agent_params, agent)
 
