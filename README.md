@@ -74,3 +74,23 @@ To make sure both the agent and the environemnt are compatible with the original
 ```shell
 % python train.py --from-pretrained pretrained/original.npz
 ```
+
+## Experiments
+
+### Exp 1. Fix Q/K
+
+Fix Q/K from the pre-trained solution, use CMA-ES to learn LSTM (the controller). Doesn't get the same performance. Takes a long time, seems to be stuck after 175+ iterations:
+
+```
+  179  45824 -8.881190132640309e+02 1.0e+00 8.08e-02  8e-02  8e-02 5298:03.3
+```
+
+How to launch:
+
+```shell
+% python exp1-topK-lstm-cmaes.py \
+  --base-from-pretrained pretrained/original.npz \
+  --resume es_logs/exp1_topK_cmaes_v0/best.pkl \
+  --eval-every 25 \
+  --verbose
+```
