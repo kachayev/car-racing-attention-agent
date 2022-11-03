@@ -94,3 +94,21 @@ How to launch:
   --eval-every 25 \
   --verbose
 ```
+
+### Exp 3. Fix LSTM
+
+Fix LSTM from the pre-trained solution, use CMA-ES to learn Q/K linear layers. Almost instantaneously emits a pretty good policy (after a few iterations): 
+
+```
+   10   2560 -8.760685376761674e+02 1.0e+00 8.47e-02  8e-02  8e-02 995:20.5
+```
+
+How to launch:
+
+```shell
+% python exp3-topK-qk-cmaes.py \
+  --base-from-pretrained pretrained/original.npz \
+  --resume es_logs/exp3_topK_qk_cmaes_v0/best.pkl \
+  --eval-every 25 \
+  --verbose
+```
