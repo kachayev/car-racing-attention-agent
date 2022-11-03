@@ -310,7 +310,7 @@ def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: 
     avg_reward = rewards.mean()
     if verbose:
         print(f"Fitness min/mean/max: {rewards.min():.2f}/{avg_reward:.2f}/{rewards.max():.2f}")
-    return -avg_reward
+    return params, -avg_reward
 
 
 def evaluate(base_agent_params, params, render: bool = False) -> float:
@@ -351,10 +351,8 @@ def train(args):
         while not es.stop():
             current_step += 1
             solutions = es.ask()
-            es.tell(
-                solutions,
-                pool.map(partial(get_fitness, base_agent_params, args.num_rollouts, verbose=args.verbose), solutions)
-            )
+            fitness = list(pool.imap_unordered(partial(get_fitness, base_agent_params, args.num_rollouts, verbose=args.verbose), solutions))
+            es.tell(*zip(*fitness))
             es.disp()
             best_ever.update(es.best)
             save_checkpoint(args.logs_dir, es, best_ever)
