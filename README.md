@@ -102,7 +102,7 @@ Fix LSTM from the pre-trained solution, use CMA-ES to learn Q/K linear layers. A
 ```
    10   2560 -8.760685376761674e+02 1.0e+00 8.47e-02  8e-02  8e-02 995:20.5
 ...
-   18   4608 -9.017837640314120e+02 1.0e+00 8.40e-02  8e-02  8e-02 2372:20.3
+   20   5120 -9.032011463678441e+02 1.0e+00 8.42e-02  8e-02  8e-02 2696:20.2   
 ```
 
 How to launch:
