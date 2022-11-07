@@ -277,9 +277,9 @@ def make_base_agent(base_agent_params):
     return agent
 
 
-def make_agent(params=None):
+def make_agent(params=None, num_frames: int = 2):
     agent = Exp4Agent(
-        num_frames=2,
+        num_frames=num_frames,
         num_hidden=16,
         top_k=10,
         output_dim=3,
@@ -306,9 +306,9 @@ def load_checkpoint(path):
         return data["es"], data["best"]
 
 
-def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: bool = False) -> float:
+def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: bool = False, num_frames: int = 2) -> float:
     env = make_env(base_agent_params)
-    agent = make_agent(params)
+    agent = make_agent(params, num_frames=num_frames)
     rewards = np.array([rollout(env, agent)[0] for _ in range(n_samples)])
     avg_reward = rewards.mean()
     if verbose:
@@ -316,17 +316,17 @@ def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: 
     return -avg_reward
 
 
-def evaluate(base_agent_params, params, render: bool = False) -> float:
+def evaluate(base_agent_params, params, render: bool = False, num_frames: int = 2) -> float:
     env = make_env(base_agent_params, evaluate=True, render=render) # no need for early termination when evaluating
-    agent = make_agent(params)
+    agent = make_agent(params, num_frames=num_frames)
     reward, _ = rollout(env, agent)
     return reward
 
 
 # NOTE: multiprocessing module uses pickle that fails when dealing
 # with lambdas (globally visible function is required)
-def evaluate_cb(base_agent_params, params, _idx: int, verbose: bool = True) -> float:
-    reward = evaluate(base_agent_params, params)
+def evaluate_cb(base_agent_params, params, _idx: int, verbose: bool = True, num_frames: int = 2) -> float:
+    reward = evaluate(base_agent_params, params, num_frames=num_frames)
     if verbose:
         print(f"Evaluation reward: {reward}")
     return reward
@@ -338,7 +338,7 @@ def train(args):
     if args.resume:
         es, best_ever = load_checkpoint(args.resume)
     else:
-        init_agent = make_agent()
+        init_agent = make_agent(num_frames=args.num_frames)
         print(init_agent)
         init_params = parameters_to_vector(init_agent.parameters()).numpy()
         es = cma.CMAEvolutionStrategy(
@@ -356,14 +356,17 @@ def train(args):
             solutions = es.ask()
             es.tell(
                 solutions,
-                pool.map(partial(get_fitness, base_agent_params, args.num_rollouts, verbose=args.verbose), solutions)
+                pool.map(
+                    partial(get_fitness, base_agent_params, args.num_rollouts, verbose=args.verbose, num_frames=args.num_frames),
+                    solutions
+                )
             )
             es.disp()
             best_ever.update(es.best)
             save_checkpoint(args.logs_dir, es, best_ever)
             if 0 == current_step % args.eval_every:
                 fitness = pool.map(
-                    partial(evaluate_cb, base_agent_params, es.result.xfavorite, verbose=args.verbose),
+                    partial(evaluate_cb, base_agent_params, es.result.xfavorite, verbose=args.verbose, num_frames=args.num_frames),
                     range(args.num_eval_rollouts)
                 )
                 print(f"Evaluation: step={current_step} fitness={np.mean(fitness)}")
@@ -385,6 +388,7 @@ def parse_args():
     parser.add_argument("--from-pretrained", type=Path, default=None)
     parser.add_argument("--base-from-pretrained", type=Path)
     parser.add_argument("--verbose", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--num-frames", type=int, default=2)
     return parser.parse_args()
 
 
