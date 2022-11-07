@@ -114,3 +114,21 @@ How to launch:
   --eval-every 25 \
   --verbose
 ```
+
+### Exp 4. Frame Stacking instead of LSTM
+
+Take pre-trained `Q/K` layers, learn MLP policy over stacked frames using the same algorithm (frame stacking to replace recurrency in the policy). Learning is rapid though somewhat unstable:
+
+```
+   37   9472 -8.008960468870334e+02 1.0e+00 9.65e-02  1e-01  1e-01 610:18.9
+```
+
+How to launch:
+
+```shell
+% python exp4-topK-stack-cmaes.py \
+  --base-from-pretrained pretrained/original.npz \
+  --resume es_logs/exp4_topK_stack_cmaes_v0/best.pkl \
+  --eval-every 25 \
+  --verbose
+```
