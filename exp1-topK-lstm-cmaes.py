@@ -12,6 +12,7 @@ import gym
 import numpy as np
 import torch
 from torch import nn
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torchvision import transforms
 
 
@@ -267,32 +268,25 @@ def make_base_agent(base_agent_params):
         data_dim=3,
         normalize_positions=True,
     )
-    to_torch(base_agent_params, agent)
+    vector_to_parameters(torch.Tensor(base_agent_params), agent.parameters())
     return agent
 
 
-def make_agent():
-    return Exp1Agent(
+def make_agent(params=None):
+    agent = Exp1Agent(
         output_dim=3,
         output_activation="tanh",
         num_hidden=16,
         top_k=10,
     )
+    if params is not None:
+        vector_to_parameters(torch.Tensor(params), agent.parameters())
+    return agent
 
 
 #
 # CMA-ES helpers (generic)
 #
-def from_torch(module: nn.Module):
-    return np.concatenate([p.data.numpy().flatten() for p in module.parameters()])
-
-
-def to_torch(params, module: nn.Module):
-    ps, ts = list(module.parameters()), torch.Tensor(params)
-    for p, p0 in zip(ps, ts.split([e.numel() for e in ps])):
-        p.data.copy_(p0.view(p.size()))
-    return module
-
 
 # XXX: save all models based on the iteration?
 def save_checkpoint(folder, es, best_solution):
@@ -309,7 +303,7 @@ def load_checkpoint(path):
 
 def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: bool = False) -> float:
     env = make_env(base_agent_params)
-    agent = to_torch(params, make_agent())
+    agent = make_agent(params)
     rewards = np.array([rollout(env, agent)[0] for _ in range(n_samples)])
     avg_reward = rewards.mean()
     if verbose:
@@ -319,7 +313,7 @@ def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: 
 
 def evaluate(base_agent_params, params, render: bool = False) -> float:
     env = make_env(base_agent_params, evaluate=True, render=render) # no need for early termination when evaluating
-    agent = to_torch(params, make_agent())
+    agent = make_agent(params)
     reward, _ = rollout(env, agent)
     return reward
 
@@ -341,7 +335,7 @@ def train(args):
     else:
         init_agent = make_agent()
         print(init_agent)
-        init_params = from_torch(init_agent)
+        init_params = parameters_to_vector(init_agent.parameters()).numpy()
         es = cma.CMAEvolutionStrategy(
             init_params,
             args.init_sigma,

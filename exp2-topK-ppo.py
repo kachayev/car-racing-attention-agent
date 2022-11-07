@@ -13,6 +13,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.utils import set_random_seed
 import torch
 from torch import nn
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torchvision import transforms
 
 
@@ -259,24 +260,13 @@ def make_base_agent(base_agent_params):
         data_dim=3,
         normalize_positions=True,
     )
-    to_torch(base_agent_params, agent)
+    vector_to_parameters(torch.Tensor(base_agent_params), agent.parameters())
     return agent
 
 
 #
 # CMA-ES helpers (generic)
 #
-def from_torch(module: nn.Module):
-    return np.concatenate([p.data.numpy().flatten() for p in module.parameters()])
-
-
-def to_torch(params, module: nn.Module):
-    ps, ts = list(module.parameters()), torch.Tensor(params)
-    for p, p0 in zip(ps, ts.split([e.numel() for e in ps])):
-        p.data.copy_(p0.view(p.size()))
-    return module
-
-
 def train(args):
     with np.load(args.base_from_pretrained) as data:
         base_agent_params = data['params'].flatten()
@@ -331,9 +321,3 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     train(args)
-    # if args.from_pretrained:
-    #     with np.load(args.from_pretrained) as data:
-    #         params = data['params'].flatten()
-    #         evaluate(params, render=True)
-    # else:
-    #     train(args)
