@@ -250,13 +250,13 @@ def rollout(env, agent) -> Tuple[float, Dict[str, Any]]:
     return total_reward, {"steps": steps}
 
 
-def make_env(base_agent_params, evaluate: bool = False, render: bool = False):
+def make_env(base_agent_params, evaluate: bool = False, render: bool = False, num_frames: int = 2):
     render_mode = "human" if render else None
     env = gym.make("CarRacing-v2", verbose=False, render_mode=render_mode)
     kwargs = dict(neg_reward_cap=20, steps_cap=1000) if not evaluate else {}
     base_agent = make_base_agent(base_agent_params)
     env = CarRacingWrapper(env, base_agent, **kwargs)
-    env = FrameStack(env, 2)
+    env = FrameStack(env, num_frames)
     return env
 
 
@@ -307,7 +307,7 @@ def load_checkpoint(path):
 
 
 def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: bool = False, num_frames: int = 2) -> float:
-    env = make_env(base_agent_params)
+    env = make_env(base_agent_params, num_frames=num_frames)
     agent = make_agent(params, num_frames=num_frames)
     rewards = np.array([rollout(env, agent)[0] for _ in range(n_samples)])
     avg_reward = rewards.mean()
@@ -317,7 +317,7 @@ def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: 
 
 
 def evaluate(base_agent_params, params, render: bool = False, num_frames: int = 2) -> float:
-    env = make_env(base_agent_params, evaluate=True, render=render) # no need for early termination when evaluating
+    env = make_env(base_agent_params, evaluate=True, render=render, num_frames=num_frames) # no need for early termination when evaluating
     agent = make_agent(params, num_frames=num_frames)
     reward, _ = rollout(env, agent)
     return reward
@@ -340,7 +340,7 @@ def train(args):
     else:
         init_agent = make_agent(num_frames=args.num_frames)
         print(init_agent)
-        init_params = parameters_to_vector(init_agent.parameters()).numpy()
+        init_params = parameters_to_vector(init_agent.parameters()).detach().numpy()
         es = cma.CMAEvolutionStrategy(
             init_params,
             args.init_sigma,

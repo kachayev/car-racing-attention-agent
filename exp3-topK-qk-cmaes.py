@@ -332,7 +332,7 @@ def train(args):
     else:
         init_agent = make_agent()
         print(init_agent)
-        init_params = parameters_to_vector(init_agent.parameters()).numpy()
+        init_params = parameters_to_vector(init_agent.parameters()).detach().numpy()
         es = cma.CMAEvolutionStrategy(
             init_params,
             args.init_sigma,
