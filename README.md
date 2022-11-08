@@ -132,3 +132,21 @@ How to launch:
   --eval-every 25 \
   --verbose
 ```
+
+To train using different number of frames (the default is 2), use `--num-frames` argument. The network size will be automatically adjusted accordinly to a new state space shaping.
+
+```shell
+% python exp4-topK-stack-cmaes.py \
+  --base-from-pretrained pretrained/original.npz \
+  --num-frames 4
+
+Exp4Agent(
+  (controller): Sequential(
+    (0): Linear(in_features=80, out_features=16, bias=True)
+    (1): ReLU()
+    (2): Linear(in_features=16, out_features=3, bias=True)
+    (3): Tanh()
+  )
+)
+(128_w,256)-aCMA-ES (mu_w=66.9,w_1=3%) in dimension 1347 (seed=1143, Mon Nov  7 23:56:22 2022)
+```
