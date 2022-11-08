@@ -20,7 +20,7 @@ The easiest way to prepare the environment is to use [`conda`](https://docs.cond
 % conda create -n cmaes python==3.9
 % conda activate cmaes
 % conda install numpy==1.23.3 pytorch==1.10.2 torchvision==0.11.3
-% python -m pip install 'gym[box2d]'==0.26.2 matplotlib==3.6.1
+% python -m pip install 'gym[box2d]'==0.26.2 matplotlib==3.6.1 cma==3.2.2
 ```
 
 ## Training
