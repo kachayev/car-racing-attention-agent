@@ -74,3 +74,79 @@ To make sure both the agent and the environemnt are compatible with the original
 ```shell
 % python train.py --from-pretrained pretrained/original.npz
 ```
+
+## Experiments
+
+### Exp 1. Fix Q/K
+
+Fix Q/K from the pre-trained solution, use CMA-ES to learn LSTM (the controller). Doesn't get the same performance. Takes a long time, seems to be stuck after 175+ iterations:
+
+```
+  179  45824 -8.881190132640309e+02 1.0e+00 8.08e-02  8e-02  8e-02 5298:03.3
+```
+
+How to launch:
+
+```shell
+% python exp1-topK-lstm-cmaes.py \
+  --base-from-pretrained pretrained/original.npz \
+  --resume es_logs/exp1_topK_cmaes_v0/best.pkl \
+  --eval-every 25 \
+  --verbose
+```
+
+### Exp 3. Fix LSTM
+
+Fix LSTM from the pre-trained solution, use CMA-ES to learn Q/K linear layers. Almost instantaneously emits a pretty good policy (after a few iterations): 
+
+```
+   10   2560 -8.760685376761674e+02 1.0e+00 8.47e-02  8e-02  8e-02 995:20.5
+...
+   20   5120 -9.032011463678441e+02 1.0e+00 8.42e-02  8e-02  8e-02 2696:20.2   
+```
+
+How to launch:
+
+```shell
+% python exp3-topK-qk-cmaes.py \
+  --base-from-pretrained pretrained/original.npz \
+  --resume es_logs/exp3_topK_qk_cmaes_v0/best.pkl \
+  --eval-every 25 \
+  --verbose
+```
+
+### Exp 4. Frame Stacking instead of LSTM
+
+Take pre-trained `Q/K` layers, learn MLP policy over stacked frames using the same algorithm (frame stacking to replace recurrency in the policy). Learning is rapid though somewhat unstable:
+
+```
+   37   9472 -8.008960468870334e+02 1.0e+00 9.65e-02  1e-01  1e-01 610:18.9
+```
+
+How to launch:
+
+```shell
+% python exp4-topK-stack-cmaes.py \
+  --base-from-pretrained pretrained/original.npz \
+  --resume es_logs/exp4_topK_stack_cmaes_v0/best.pkl \
+  --eval-every 25 \
+  --verbose
+```
+
+To train using different number of frames (the default is 2), use `--num-frames` argument. The network size will be automatically adjusted accordinly to a new state space shaping.
+
+```shell
+% python exp4-topK-stack-cmaes.py \
+  --base-from-pretrained pretrained/original.npz \
+  --num-frames 4
+
+Exp4Agent(
+  (controller): Sequential(
+    (0): Linear(in_features=80, out_features=16, bias=True)
+    (1): ReLU()
+    (2): Linear(in_features=16, out_features=3, bias=True)
+    (3): Tanh()
+  )
+)
+(128_w,256)-aCMA-ES (mu_w=66.9,w_1=3%) in dimension 1347 (seed=1143, Mon Nov  7 23:56:22 2022)
+```

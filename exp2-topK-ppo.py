@@ -1,15 +1,16 @@
 import argparse
-from functools import partial
 import math
 import multiprocessing as mp
-import os
 from pathlib import Path
-import pickle
 from typing import Any, Dict, Tuple
 
-import cma
 import gym
+from gym.spaces import Box
 import numpy as np
+from sb3_contrib import RecurrentPPO
+from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
+from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.utils import set_random_seed
 import torch
 from torch import nn
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
@@ -155,13 +156,13 @@ class CarRacingAgent(nn.Module):
         centers = self._patch_centers[top_k_ix].flatten(0, -1)
         if self._normalize_positions:
             centers = centers / self._image_size
-        return self.controller(centers).squeeze()
+        return centers
 
     def step(self, obs):
         with torch.no_grad():
             x = self._transform(obs)
-            actions = self.forward(x).numpy()
-        return actions, None
+            centers = self.forward(x)
+        return centers, None
 
     def reset(self):
         self.controller.reset()
@@ -169,7 +170,7 @@ class CarRacingAgent(nn.Module):
 
 class CarRacingWrapper(gym.Wrapper):
 
-    def __init__(self, env, steps_cap=0, neg_reward_cap=0):
+    def __init__(self, env, base_agent, steps_cap=0, neg_reward_cap=0):
         super().__init__(env)
         self.env = env
         self.steps_cap = steps_cap
@@ -178,12 +179,23 @@ class CarRacingWrapper(gym.Wrapper):
         self.action_mean = (env.action_space.high + env.action_space.low) / 2.
         self.neg_reward_seq = 0
         self.steps_count = 0
+        self.base_agent = base_agent
+
+    @property
+    def observation_space(self):
+        return Box(low=0.0, high=1.0, shape=(20,), dtype=np.float32)
 
     def reset(self):
+        self.base_agent.reset()
         obs = self.env.reset()
+        obs = self.overwrite_obs(obs)
         self.neg_reward_seq = 0
         self.steps_count = 0
         return obs
+
+    def overwrite_obs(self, obs):
+        centers, _ = self.base_agent.step(obs)
+        return centers
 
     def overwrite_terminate_flag(self, reward):
         if self.neg_reward_cap == 0:
@@ -197,13 +209,14 @@ class CarRacingWrapper(gym.Wrapper):
     def step(self, action):
         self.steps_count += 1
         action = action * self.action_range + self.action_mean
-        obs, reward, done, timeout, info = self.env.step(action)
+        obs, reward, done, info = self.env.step(action)
+        obs = self.overwrite_obs(obs)
         done = done or self.overwrite_terminate_flag(reward)
-        return obs, reward, done, timeout, info
+        return obs, reward, done, info
 
 
 #
-# ES training loop (strategy, init params, loop, eval, checkpoints)
+# Training loop
 #
 def rollout(env, agent) -> Tuple[float, Dict[str, Any]]:
     total_reward, done, steps = 0, False, 0
@@ -217,15 +230,24 @@ def rollout(env, agent) -> Tuple[float, Dict[str, Any]]:
     return total_reward, {"steps": steps}
 
 
-def make_env(evaluate: bool = False, render: bool = False):
-    render_mode = "human" if render else None
-    env = gym.make("CarRacing-v2", verbose=False, render_mode=render_mode)
+def make_base_env(base_agent_params, evaluate: bool = False, render: bool = False):
+    # NOTE: becase we are using sb3-contib package we have to go with old version
+    # of the environment. API is adjusted as well.
+    env = gym.make("CarRacing-v0", verbose=False)
     kwargs = dict(neg_reward_cap=20, steps_cap=1000) if not evaluate else {}
-    env = CarRacingWrapper(env, **kwargs)
+    base_agent = make_base_agent(base_agent_params)
+    env = CarRacingWrapper(env, base_agent, **kwargs)
     return env
 
 
-def make_agent(params=None):
+def make_env(base_agent_params: np.ndarray, seed: int, rank: int):
+    def _init() -> gym.Env:
+        return make_base_env(base_agent_params)
+    set_random_seed(seed)
+    return _init
+
+
+def make_base_agent(base_agent_params):
     agent = CarRacingAgent(
         image_size=96,
         query_dim=4,
@@ -238,86 +260,48 @@ def make_agent(params=None):
         data_dim=3,
         normalize_positions=True,
     )
-    if params is not None:
-        vector_to_parameters(torch.Tensor(params), agent.parameters())
+    vector_to_parameters(torch.Tensor(base_agent_params), agent.parameters())
     return agent
 
 
 #
 # CMA-ES helpers (generic)
 #
-
-# XXX: save all models based on the iteration?
-def save_checkpoint(folder, es, best_solution):
-    os.makedirs(folder, exist_ok=True)
-    with open(f"{folder}/best.pkl", "wb") as f:
-        pickle.dump({"es": es, "best": best_solution}, f)
-
-
-def load_checkpoint(path):
-    with open(path, "rb") as f:
-        data = pickle.load(f)
-        return data["es"], data["best"]
-
-
-def get_fitness(n_samples: int, params: np.ndarray, verbose: bool = False) -> float:
-    env = make_env()
-    agent = make_agent(params)
-    rewards = np.array([rollout(env, agent)[0] for _ in range(n_samples)])
-    avg_reward = rewards.mean()
-    if verbose:
-        print(f"Fitness min/mean/max: {rewards.min():.2f}/{avg_reward:.2f}/{rewards.max():.2f}")
-    return -avg_reward
-
-
-def evaluate(params: np.ndarray, render: bool = False) -> float:
-    env = make_env(evaluate=True, render=render) # no need for early termination when evaluating
-    agent = make_agent(params)
-    reward, _ = rollout(env, agent)
-    return -reward
-
-
-# NOTE: multiprocessing module uses pickle that fails when dealing
-# with lambdas (globally visible function is required)
-def evaluate_cb(params: np.ndarray, _idx: int) -> float:
-    return evaluate(params)
-
-
 def train(args):
-    if args.resume:
-        es, best_ever = load_checkpoint(args.resume)
-    else:
-        init_agent = make_agent()
-        print(init_agent)
-        init_params = parameters_to_vector(init_agent.parameters()).detach().numpy()
-        es = cma.CMAEvolutionStrategy(
-            init_params,
-            args.init_sigma,
-            {"popsize": args.population_size, "seed": args.seed, "maxiter": args.max_iter}
+    with np.load(args.base_from_pretrained) as data:
+        base_agent_params = data['params'].flatten()
+    if args.num_workers is None:
+        args.num_workers = mp.cpu_count()-1
+    env = SubprocVecEnv([make_env(base_agent_params, args.seed, i) for i in range(args.num_workers)])
+    print(f"Running: {args.num_workers} workers")
+    model = RecurrentPPO(
+        'MlpLstmPolicy',
+        env,
+        verbose=1,
+        learning_rate=0.003,
+        policy_kwargs=dict(
+            lstm_hidden_size=16,
+            net_arch=[dict(pi=[], vf=[])],
+            activation_fn=nn.Tanh,
+            shared_lstm=True,
+            enable_critic_lstm=False,
         )
-        best_ever = cma.optimization_tools.BestSolution()
-    if not args.num_workers:
-        args.num_workers = mp.cpu_count() - 1
-    current_step = 0
-    with mp.Pool(processes=args.num_workers) as pool:
-        while not es.stop():
-            current_step += 1
-            solutions = es.ask()
-            es.tell(
-                solutions,
-                pool.map(partial(get_fitness, args.num_rollouts, verbose=True), solutions)
-            )
-            es.disp()
-            best_ever.update(es.best)
-            save_checkpoint(args.logs_dir, es, best_ever)
-            if 0 == current_step % args.eval_every:
-                fitness = pool.map(partial(evaluate_cb, es.result.xfavorite), range(args.num_eval_rollouts))
-                print(f"Evaluation: step={current_step} fitness={np.mean(fitness)}")
-        es.result_pretty()
+    )
+    print(model.policy)
+    checkpoint_callback = CheckpointCallback(
+        save_freq=10_000,
+        save_path="sb3_logs/",
+        name_prefix="exp2-topK-ppo",
+        save_replay_buffer=False,
+        save_vecnormalize=False,
+    )
+    eval_env = make_base_env(base_agent_params, evaluate=True)
+    eval_callback = EvalCallback(eval_env, eval_freq=1_000, render=False)
+    model.learn(total_timesteps=args.total_timesteps, log_interval=10, callback=[checkpoint_callback, eval_callback])
 
 
 def parse_args():
-    parser = argparse.ArgumentParser("RL agent training with ES")
+    parser = argparse.ArgumentParser("RL agent training with PPO")
     parser.add_argument("--seed", type=int, default=1143)
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
@@ -327,16 +311,13 @@ def parse_args():
     parser.add_argument("--num-rollouts", type=int, default=16)
     parser.add_argument("--eval-every", type=int, default=10)
     parser.add_argument("--num-eval-rollouts", type=int, default=64)
-    parser.add_argument("--logs-dir", type=str, default="es_logs/version_0")
+    parser.add_argument("--logs-dir", type=str, default="es_logs/exp1_topK_ppo_v0")
     parser.add_argument("--from-pretrained", type=Path, default=None)
+    parser.add_argument("--base-from-pretrained", type=Path)
+    parser.add_argument("--total-timesteps", type=int, default=1_000_000)
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    if args.from_pretrained:
-        with np.load(args.from_pretrained) as data:
-            params = data['params'].flatten()
-            evaluate(params, render=True)
-    else:
-        train(args)
+    train(args)
