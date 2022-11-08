@@ -211,7 +211,8 @@ def rollout(env, agent) -> Tuple[float, Dict[str, Any]]:
     agent.reset()
     while not done:
         action, _ = agent.step(obs)
-        obs, reward, done, _, _ = env.step(action)
+        obs, reward, done, timeout, _ = env.step(action)
+        done |= timeout
         steps += 1
         total_reward += reward
     return total_reward, {"steps": steps}
