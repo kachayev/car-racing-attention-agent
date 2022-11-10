@@ -150,3 +150,25 @@ Exp4Agent(
 )
 (128_w,256)-aCMA-ES (mu_w=66.9,w_1=3%) in dimension 1347 (seed=1143, Mon Nov  7 23:56:22 2022)
 ```
+
+### Exp 5. RNN instead of LSTM 
+
+There are multiple interesting angle here:
+* number of neurons is much smaller compared to LSTM
+* `ReLU` is used as RNN's non-linearity function, imposing additional inductive bias on the solution
+
+How to run:
+
+```shell
+% python exp5-topK-rnn-cmaes.py \
+  --base-from-pretrained pretrained/original.npz \
+  --eval-every 25 \
+  --verbose
+
+Exp5Agent(
+  (rnn): RNN(20, 16)
+  (fc): Linear(in_features=16, out_features=3, bias=True)
+  (activation): Tanh()
+)
+(128_w,256)-aCMA-ES (mu_w=66.9,w_1=3%) in dimension 659 (seed=1143, Thu Nov 09 22:11:20 2022)
+```
