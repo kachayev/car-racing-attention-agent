@@ -157,6 +157,12 @@ There are multiple interesting angle here:
 * number of neurons is much smaller compared to LSTM
 * `ReLU` is used as RNN's non-linearity function, imposing additional inductive bias on the solution
 
+It learns blazingly fast compared to LSMT:
+
+```
+   28   7168 -6.381508565694667e+02 1.0e+00 9.50e-02  9e-02  1e-01 436:05.6
+```
+
 How to run:
 
 ```shell
