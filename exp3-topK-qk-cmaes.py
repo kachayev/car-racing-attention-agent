@@ -298,7 +298,7 @@ def load_checkpoint(path):
         return data["es"], data["best"]
 
 
-def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: bool = False) -> float:
+def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: bool = False) -> Tuple[np.ndarray, float]:
     env = make_env(base_agent_params)
     agent = make_agent(params)
     rewards = np.array([rollout(env, agent)[0] for _ in range(n_samples)])
