@@ -82,6 +82,8 @@ To make sure both the agent and the environemnt are compatible with the original
 Fix Q/K from the pre-trained solution, use CMA-ES to learn LSTM (the controller). Doesn't get the same performance. Takes a long time, seems to be stuck after 175+ iterations:
 
 ```
+Iterat #Fevals   function value  axis ratio  sigma  min&max std  t[m:s]
+...
   179  45824 -8.881190132640309e+02 1.0e+00 8.08e-02  8e-02  8e-02 5298:03.3
 ```
 
@@ -100,6 +102,8 @@ How to launch:
 Fix LSTM from the pre-trained solution, use CMA-ES to learn Q/K linear layers. Almost instantaneously emits a pretty good policy (after a few iterations): 
 
 ```
+Iterat #Fevals   function value  axis ratio  sigma  min&max std  t[m:s]
+...
    10   2560 -8.760685376761674e+02 1.0e+00 8.47e-02  8e-02  8e-02 995:20.5
 ...
    20   5120 -9.032011463678441e+02 1.0e+00 8.42e-02  8e-02  8e-02 2696:20.2   
@@ -115,11 +119,51 @@ How to launch:
   --verbose
 ```
 
+**Exp 3.1.** To test out the hypothesis that `SelfAttention` would be more robust if linear layers (Q/K) have no bias, we also run experiment with `bias=False` and `query_dim=2` (max level compression for the information from each patch).
+
+To run:
+```shell
+% python exp3-topK-qk-cmaes.py \
+  --base-from-pretrained pretrained/original.npz \
+  --eval-every 25 \
+  --verbose \
+  --query-dim 2 \
+  --no-bias
+
+Exp3Agent(
+  (attention): SelfAttention(
+    (fc_q): Linear(in_features=147, out_features=2, bias=False)
+    (fc_k): Linear(in_features=147, out_features=2, bias=False)
+  )
+)
+(128_w,256)-aCMA-ES (mu_w=66.9,w_1=3%) in dimension 588 (seed=1143, Sun Nov 20 23:48:31 2022)
+```
+
+Quite a few of randomly generated agents from the very first population of the algorithm, in fact, show decent performance on the task:
+
+```shell
+Fitness min/mean/max: 120.45/352.30/733.91
+Fitness min/mean/max: 11.77/212.05/527.22
+Fitness min/mean/max: 134.75/498.31/901.46
+Fitness min/mean/max: 96.20/383.97/900.35
+```
+
+After the first iteration we get agent with a quite strong performance, rapid improvements to follow:
+
+```
+Iterat #Fevals   function value  axis ratio  sigma  min&max std  t[m:s]
+    1    256 -7.360439490799304e+02 1.0e+00 9.50e-02  9e-02  9e-02 22:38.5
+...
+   10   2560 -8.451596726780031e+02 1.0e+00 8.65e-02  9e-02  9e-02 857:11.7
+```
+
 ### Exp 4. Frame Stacking instead of LSTM
 
 Take pre-trained `Q/K` layers, learn MLP policy over stacked frames using the same algorithm (frame stacking to replace recurrency in the policy). Learning is rapid though somewhat unstable:
 
 ```
+Iterat #Fevals   function value  axis ratio  sigma  min&max std  t[m:s]
+...
    37   9472 -8.008960468870334e+02 1.0e+00 9.65e-02  1e-01  1e-01 610:18.9
 ```
 
@@ -160,9 +204,13 @@ There are multiple interesting angle here:
 It learns blazingly fast compared to LSMT:
 
 ```
+Iterat #Fevals   function value  axis ratio  sigma  min&max std  t[m:s]
+...
    28   7168 -6.381508565694667e+02 1.0e+00 9.50e-02  9e-02  1e-01 436:05.6
 ...
-   43  11008 -8.484943160119002e+02 1.0e+00 1.06e-01  1e-01  1e-01 1233:14.8   
+   43  11008 -8.484943160119002e+02 1.0e+00 1.06e-01  1e-01  1e-01 1233:14.8
+...
+  111  28416 -8.902925877126818e+02 1.1e+00 1.16e-01  1e-01  1e-01 8106:54.6
 ```
 
 How to run:

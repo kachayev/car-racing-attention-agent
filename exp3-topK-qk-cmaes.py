@@ -63,10 +63,10 @@ class LSTMController(nn.Module):
 
 class SelfAttention(nn.Module):
 
-    def __init__(self, data_dim, dim_q):
+    def __init__(self, data_dim, dim_q, bias: bool = True):
         super().__init__()
-        self.fc_q = nn.Linear(data_dim, dim_q)
-        self.fc_k = nn.Linear(data_dim, dim_q)
+        self.fc_q = nn.Linear(data_dim, dim_q, bias)
+        self.fc_k = nn.Linear(data_dim, dim_q, bias)
         self.eval()
 
     def forward(self, X):
@@ -131,6 +131,7 @@ class Exp3Agent(nn.Module):
         top_k,
         data_dim,
         normalize_positions: bool = True,
+        attention_bias: bool = True,
     ):
         super().__init__()
         self._image_size = image_size
@@ -157,6 +158,7 @@ class Exp3Agent(nn.Module):
         self.attention = SelfAttention(
             data_dim=data_dim * self._patch_size ** 2,
             dim_q=query_dim,
+            bias=attention_bias,
         )
         self.eval()
 
@@ -266,15 +268,16 @@ def make_base_agent(base_agent_params):
     return agent
 
 
-def make_agent(params=None):
+def make_agent(params=None, query_dim: int = 4, bias: bool = True):
     agent = Exp3Agent(
         image_size=96,
-        query_dim=4,
+        query_dim=query_dim,
         patch_size=7,
         patch_stride=4,
         top_k=10,
         data_dim=3,
         normalize_positions=True,
+        attention_bias=bias,
     )
     if params is not None:
         vector_to_parameters(torch.Tensor(params), agent.parameters())
@@ -298,9 +301,9 @@ def load_checkpoint(path):
         return data["es"], data["best"]
 
 
-def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: bool = False) -> Tuple[np.ndarray, float]:
+def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: bool = False, agent_hyperparams = None) -> Tuple[np.ndarray, float]:
     env = make_env(base_agent_params)
-    agent = make_agent(params)
+    agent = make_agent(params, **(agent_hyperparams or {}))
     rewards = np.array([rollout(env, agent)[0] for _ in range(n_samples)])
     avg_reward = rewards.mean()
     if verbose:
@@ -308,17 +311,17 @@ def get_fitness(base_agent_params, n_samples: int, params: np.ndarray, verbose: 
     return params, -avg_reward
 
 
-def evaluate(base_agent_params, params, render: bool = False) -> float:
+def evaluate(base_agent_params, params, render: bool = False, agent_hyperparams = None) -> float:
     env = make_env(base_agent_params, evaluate=True, render=render) # no need for early termination when evaluating
-    agent = make_agent(params)
+    agent = make_agent(params, **(agent_hyperparams or {}))
     reward, _ = rollout(env, agent)
     return reward
 
 
 # NOTE: multiprocessing module uses pickle that fails when dealing
 # with lambdas (globally visible function is required)
-def evaluate_cb(base_agent_params, params, _idx: int, verbose: bool = True) -> float:
-    reward = evaluate(base_agent_params, params)
+def evaluate_cb(base_agent_params, params, _idx: int, verbose: bool = True, agent_hyperparams = None) -> float:
+    reward = evaluate(base_agent_params, params, render=False, agent_hyperparams=agent_hyperparams)
     if verbose:
         print(f"Evaluation reward: {reward}")
     return reward
@@ -341,19 +344,29 @@ def train(args):
         best_ever = cma.optimization_tools.BestSolution()
     if not args.num_workers:
         args.num_workers = mp.cpu_count() - 1
+    hyperparams = dict(query_dim=args.query_dim, bias=args.bias)
     current_step = 0
     with mp.Pool(processes=args.num_workers) as pool:
         while not es.stop():
             current_step += 1
             solutions = es.ask()
-            fitness = list(pool.imap_unordered(partial(get_fitness, base_agent_params, args.num_rollouts, verbose=args.verbose), solutions))
+            fitness_cb = partial(
+                get_fitness,
+                base_agent_params,
+                args.num_rollouts,
+                verbose=args.verbose,
+                agent_hyperparams=hyperparams,
+            )
+            fitness = list(pool.imap_unordered(fitness_cb, solutions))
             es.tell(*zip(*fitness))
             es.disp()
             best_ever.update(es.best)
+            # XXX: seems like storing hyperparams for run would be a nice idea,
+            #      otherwise agent loaded from the file might not work at all
             save_checkpoint(args.logs_dir, es, best_ever)
             if 0 == current_step % args.eval_every:
                 fitness = pool.map(
-                    partial(evaluate_cb, base_agent_params, es.result.xfavorite, verbose=args.verbose),
+                    partial(evaluate_cb, base_agent_params, es.result.xfavorite, verbose=args.verbose, agent_hyperparams=hyperparams),
                     range(args.num_eval_rollouts)
                 )
                 print(f"Evaluation: step={current_step} fitness={np.mean(fitness)}")
@@ -375,6 +388,8 @@ def parse_args():
     parser.add_argument("--from-pretrained", type=Path, default=None)
     parser.add_argument("--base-from-pretrained", type=Path)
     parser.add_argument("--verbose", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--query-dim", type=int, default=4)
+    parser.add_argument("--bias", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
 
